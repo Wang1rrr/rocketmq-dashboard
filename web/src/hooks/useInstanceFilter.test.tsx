@@ -16,7 +16,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { useInstanceFilter } from './useInstanceFilter';
 
@@ -30,6 +30,19 @@ function InstanceRouteProbe() {
   const { pathname } = useLocation();
   const { selectedInstanceId } = useInstanceFilter();
   return <output>{`${pathname}|${selectedInstanceId}`}</output>;
+}
+
+function InstanceFallbackProbe() {
+  const { pathname } = useLocation();
+  const { selectedInstanceId, instancesError, retryInstances } = useInstanceFilter();
+  return (
+    <>
+      <output>{`${pathname}|${selectedInstanceId}|${instancesError}`}</output>
+      <button type="button" onClick={retryInstances}>
+        retry
+      </button>
+    </>
+  );
 }
 
 describe('useInstanceFilter', () => {
@@ -86,6 +99,58 @@ describe('useInstanceFilter', () => {
 
     await waitFor(() => {
       expect(screen.getByText('/instance/instance-a/topic|instance-a')).toBeInTheDocument();
+    });
+  });
+
+  it('keeps the route instance when the instance list fails to load', async () => {
+    instanceServiceMocks.listInstances.mockRejectedValue(new Error('boom'));
+
+    render(
+      <MemoryRouter initialEntries={['/instance/instance-b/topic']}>
+        <Routes>
+          <Route path="/instance/:instanceId/topic" element={<InstanceFallbackProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('/instance/instance-b/topic|instance-b|true')).toBeInTheDocument();
+    });
+  });
+
+  it('recovers after retrying a failed instance list', async () => {
+    instanceServiceMocks.listInstances
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce([
+        {
+          id: 7,
+          name: 'instance-a',
+          remark: '',
+          type: 'PROXY',
+          endpoint: '127.0.0.1:8080',
+          topicCount: 0,
+          consumerGroupCount: 0,
+          gmtCreate: '2026-01-01T00:00:00Z',
+          gmtModified: '2026-01-01T00:00:00Z',
+        },
+      ]);
+
+    render(
+      <MemoryRouter initialEntries={['/instance/instance-b/topic']}>
+        <Routes>
+          <Route path="/instance/:instanceId/topic" element={<InstanceFallbackProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('/instance/instance-b/topic|instance-b|true')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('retry'));
+
+    await waitFor(() => {
+      expect(screen.getByText('/instance/instance-a/topic|instance-a|false')).toBeInTheDocument();
     });
   });
 });

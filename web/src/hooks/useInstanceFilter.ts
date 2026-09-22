@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { listInstances } from '../services/instanceService';
 import type { Instance } from '../api/instance';
@@ -47,6 +47,8 @@ export function useInstanceFilter() {
 
   const [instances, setInstances] = useState<Instance[]>([]);
   const [instancesLoading, setInstancesLoading] = useState(true);
+  const [instancesError, setInstancesError] = useState(false);
+  const [instancesReloadKey, setInstancesReloadKey] = useState(0);
 
   // Keep the latest selected instance id in a ref so the instance *list* is only
   // fetched when needed (section / navigation changes) and not re-fetched every
@@ -63,6 +65,7 @@ export function useInstanceFilter() {
       .then((nextInstances) => {
         if (cancelled) return;
         setInstances(nextInstances);
+        setInstancesError(false);
         const selectedInstanceId = routeInstanceIdRef.current;
         const isKnownInstance = nextInstances.some(
           (instance) => instance.name === selectedInstanceId,
@@ -74,7 +77,9 @@ export function useInstanceFilter() {
         }
       })
       .catch(() => {
+        if (cancelled) return;
         // 实例列表加载失败时不做实例过滤，保持页面数据可用
+        setInstancesError(true);
       })
       .finally(() => {
         if (!cancelled) setInstancesLoading(false);
@@ -82,13 +87,21 @@ export function useInstanceFilter() {
     return () => {
       cancelled = true;
     };
-  }, [navigate, section]);
+  }, [navigate, section, instancesReloadKey]);
 
+  // When the instance list fails to load we fall back to "no filtering": keep the instance
+  // carried by the route so the page still renders instead of blanking out forever.
   const selectedInstanceId =
     routeInstanceId !== undefined && instances.some((instance) => instance.name === routeInstanceId)
       ? routeInstanceId
-      : instances[0]?.name;
+      : (instances[0]?.name ?? (instancesError ? routeInstanceId : undefined));
   const selectedInstance = instances.find((instance) => instance.name === selectedInstanceId);
+
+  const retryInstances = useCallback(() => {
+    setInstancesError(false);
+    setInstancesLoading(true);
+    setInstancesReloadKey((key) => key + 1);
+  }, []);
 
   const selectInstance = (name: string) => {
     navigate(`/instance/${encodeURIComponent(name)}/${section}`);
@@ -102,6 +115,8 @@ export function useInstanceFilter() {
   return {
     instances,
     instancesLoading,
+    instancesError,
+    retryInstances,
     selectedInstanceId,
     selectedInstance,
     selectInstance,
